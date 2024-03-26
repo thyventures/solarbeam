@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SVG Rectangle Plotter</title>
+    <script src="https://cdn.jsdelivr.net/npm/suncalc@1.8.0/suncalc.js"></script>
+    <style>
+      #svgContainer {
+        /* border: 2px solid black;
+        width: 620px;
+        height: 620px; */
+        position: relative;
+        left: 10%;
+      }
+      .control-container {
+        display: flex;
+        align-items: left;
+        margin-left: 10%;
+        flex-direction: column;
+        justify-content: flex-start;
+      }
+      .slider-container {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        width: 620px;
+      }
+    </style>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div id="svgContainer"></div>
+    <div class="control-container">
+      <div class="slider-container">
+        <label for="imageUpload">Open Estate or floorplan:</label>
+        <input
+          type="file"
+          id="imageUpload"
+          name="imageUpload"
+          accept="image/*"
+        />
+      </div>
+      <div class="slider-container">
+        <label for="dateSlider">Select Date:</label>
+        <input
+          type="range"
+          id="dateSlider"
+          name="date"
+          min="1"
+          max="366"
+          value="173"
+          style="width: 30rem"
+        />
+        <span id="selectedDate">Jan 1</span>
+      </div>
+
+      <div class="slider-container">
+        <label for="hourSlider">Select Hour:</label>
+        <input
+          type="range"
+          id="hourSlider"
+          name="hour"
+          min="70"
+          max="200"
+          value="70"
+          step="1"
+          style="width: 30rem"
+        />
+        <span id="selectedTime">7 AM</span>
+      </div>
+
+      <div class="slider-container">
+        <label for="beamWidthSlider">Beam Width:</label>
+        <input
+          type="range"
+          id="beamWidthSlider"
+          name="beamWidth"
+          min="1"
+          max="300"
+          value="50"
+          step="1"
+          style="width: 30rem"
+        />
+        <span id="selectedBeamWidth">50</span>
+      </div>
+
+      <div class="slider-container">
+        <label for="imageSizeSlider">Image Size:</label>
+        <input
+          type="range"
+          id="imageSizeSlider"
+          name="imageSize"
+          min="1"
+          max="500"
+          value="200"
+          step="1"
+          style="width: 30rem"
+        />
+        <span id="selectedImageSize">200</span>
+      </div>
+
+      <div class="slider-container">
+        <label for="imageAngleSlider">Image Angle:</label>
+        <input
+          type="range"
+          id="imageAngleSlider"
+          name="imageAngle"
+          min="0"
+          max="360"
+          value="90"
+          step="1"
+          style="width: 30rem"
+        />
+        <span id="selectedImageAngle">90</span>
+      </div>
+
+      <div class="slider-container">
+        <label for="svgSizeSlider">SVG Size:</label>
+        <input
+          type="range"
+          id="svgSizeSlider"
+          name="svgSize"
+          min="1"
+          max="1000"
+          value="620"
+          step="10"
+          style="width: 30rem"
+        />
+        <span id="selectedSvgSize">620</span>
+      </div>
+    </div>
+
+    <script>
+      const sgLat = 1.3775488559342783;
+      const sgLong = 103.76507702553253;
+      let svgSize = 620;
+      let gridCenter = svgSize / 2;
+      const gridColor = "grey";
+      const sunHeight = 10;
+      let imageSize = 200;
+      let imageRightBound = 0;
+      let imageLeftBound = 0;
+      let imageAngle = 90;
+      let sunDateTime = new Date();
+      let parsedDate = new Date("2024-06-21T07:00:00");
+      let parsedHour = 7;
+      let sunPosX = 0;
+      let sunPosY = 0;
+      let sunBeam = 0;
+      let beamWidth = 50;
+
+      const svgElement = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "svg"
+      );
+      svgElement.setAttribute("width", svgSize.toString());
+      svgElement.setAttribute("height", svgSize.toString());
+      svgElement.setAttribute("transform", "rotate(-90)");
+
+      const toRadian = (degree) => degree * (Math.PI / 180);
+
+      // Print Grid
+      if (false) {
+        for (let i = 0; i < 9; i++) {
+          const circle = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "circle"
+          );
+          const radius = ((i + 1) * gridCenter) / 9;
+          circle.setAttribute("cx", gridCenter.toString());
+          circle.setAttribute("cy", gridCenter.toString());
+          circle.setAttribute("r", radius.toString());
+          circle.setAttribute("stroke", gridColor);
+          circle.setAttribute("stroke-width", "1");
+          circle.setAttribute("fill", "none");
+
+          svgElement.appendChild(circle);
+        }
+      }
+
+      // Define function to calculate azimuth and altitude
+      const checkIsNorthHem = (lat) => {
+        return lat >= 0;
+      };
+
+      const getIntermediateDatetimes = (
+        startDatetime,
+        endDatetime,
+        numIntervals
+      ) => {
+        const start = new Date(startDatetime);
+        const end = new Date(endDatetime);
+        const interval = (end - start) / (numIntervals + 1);
+
+        const intermediateDatetimes = [startDatetime];
+        for (let i = 1; i <= numIntervals; i++) {
+          const intermediateTime = start.getTime() + interval * i;
+          intermediateDatetimes.push(new Date(intermediateTime));
+        }
+        intermediateDatetimes.push(endDatetime);
+
+        return intermediateDatetimes;
+      };
+
+      const calSunPos = (dateTime, lat, long) => {
+        const results = [];
+
+        var times = SunCalc.getTimes(dateTime, lat, long);
+        // console.log("times", times);
+        const sunDateTimes = getIntermediateDatetimes(
+          times.sunrise,
+          times.sunset,
+          10
+        );
+        // console.log("sunDateTimes", sunDateTimes);
+
+        const isNorthHem = checkIsNorthHem(lat);
+
+        const otherResults = [];
+        sunDateTimes.map((sunDT) => {
+          let sunPos = SunCalc.getPosition(sunDT, lat, long);
+          let degreeAzimuth = (sunPos.azimuth * 180) / Math.PI;
+          let degreeAltitude = (sunPos.altitude * 180) / Math.PI;
+
+          if (isNorthHem) {
+            degreeAzimuth = degreeAzimuth + 180;
+          }
+          results.push({
+            time: sunDT,
+            azimuth: degreeAzimuth,
+            altitude: degreeAltitude,
+          });
+        });
+        return results;
+      };
+
+      // Define coordinates functions
+      const calculateX = (hypo, angle) => {
+        return hypo * Math.sin(toRadian(angle));
+      };
+      const calculateY = (hypo, angle) => {
+        return hypo * Math.cos(toRadian(angle));
+      };
+      const altitudeToHypothenus = (altitudeAngle) => {
+        return (gridCenter / 90) * (90 - altitudeAngle);
+      };
+      const calculateCoordinate = (azimuth, altitude) => {
+        const hypo = altitudeToHypothenus(altitude);
+        const x = calculateX(hypo, azimuth);
+        const y = calculateY(hypo, azimuth);
+        return { x, y };
+      };
+
+      // Calculate yearly coordinates
+      // Draw polygon
+      const polygon = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "polygon"
+      );
+      polygon.setAttribute("stroke", gridColor);
+      polygon.setAttribute("stroke-width", "1");
+      polygon.setAttribute("stroke-opacity", "0.2");
+      polygon.setAttribute("fill", "yellow");
+      polygon.setAttribute("fill-opacity", "0.2");
+      const calculateYearlyPoints = () => {
+        const juneDateTime = new Date("2024-06-21T05:00:00");
+        const juneResults = calSunPos(juneDateTime, sgLat, sgLong);
+        // console.log("juneResults", juneResults);
+        const decDateTime = new Date("2024-12-21T05:00:00");
+        const decResults = calSunPos(decDateTime, sgLat, sgLong);
+        // console.log("decResults", decResults);
+        const calculateCoordinates = (topData, bottomData) => {
+          const coordinates = [];
+          for (i = 0; i < topData.length; i++) {
+            const currData = topData[i];
+
+            const result = calculateCoordinate(
+              currData.azimuth,
+              currData.altitude
+            );
+            const finalX = result.x + gridCenter;
+            const finalY = result.y + gridCenter;
+
+            coordinates.push({ y: finalX, x: finalY });
+          }
+
+          const bottomResults = [];
+          for (i = 0; i < bottomData.length; i++) {
+            const currData = bottomData[i];
+
+            const result = calculateCoordinate(
+              currData.azimuth,
+              currData.altitude
+            );
+            const finalX = result.x + gridCenter;
+            const finalY = result.y + gridCenter;
+
+            bottomResults.push({ y: finalX, x: finalY });
+          }
+          coordinates.push(...bottomResults.reverse());
+          return coordinates;
+        };
+        const coordinates = calculateCoordinates(juneResults, decResults);
+        polygon.setAttribute(
+          "points",
+          coordinates.map((point) => `${point.x},${point.y}`)
+        );
+
+        // Append polygon and circles to SVG
+        svgElement.appendChild(polygon);
+      };
+      calculateYearlyPoints();
+
+      // Append North to svg
+      const setNorth = () => {
+        const textX = (svgSize / 2) * 1.3;
+        const textY = svgSize / 2;
+        textElement.setAttribute("x", textX.toString());
+        textElement.setAttribute("y", textY.toString());
+        textElement.setAttribute("font-family", "Arial");
+        textElement.setAttribute("font-size", (svgSize / 20).toString());
+        textElement.setAttribute("fill", "black");
+        textElement.textContent = "N";
+        textElement.setAttribute(
+          "transform",
+          `rotate(90 ${(textX + 7).toString()} ${textY.toString()})`
+        );
+        svgElement.appendChild(textElement);
+      };
+      const textElement = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "text"
+      );
+      setNorth();
+
+      // Calculate sun icon position
+      const calculateSunCoordinate = (parsedDate, parsedHour, lat, long) => {
+        // get the solar
+        const hour = Math.floor(parsedHour); // Extract the whole number part
+        const minuteFraction = parsedHour - hour; // Extract the fractional part
+        const minute = Math.round(60 * minuteFraction); // Convert the fractional part to minutes
+
+        sunDateTime = new Date(
+          parsedDate.getFullYear(),
+          parsedDate.getMonth(),
+          parsedDate.getDate(),
+          hour,
+          minute
+        );
+        const formattedTime = sunDateTime.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+
+        selectedTimeDiv.textContent = formattedTime;
+        const isNorthHem = checkIsNorthHem(lat);
+        const sunPos = SunCalc.getPosition(sunDateTime, lat, long);
+        let degreeAzimuth = (sunPos.azimuth * 180) / Math.PI;
+        let degreeAltitude = (sunPos.altitude * 180) / Math.PI;
+
+        if (isNorthHem) {
+          degreeAzimuth = degreeAzimuth + 180;
+        }
+
+        const result = calculateCoordinate(degreeAzimuth, degreeAltitude);
+
+        const finalX = result.x + gridCenter;
+        const finalY = result.y + gridCenter;
+        const beamDirection = degreeAzimuth < 180 ? -1 : 1;
+        const beam = svgSize * Math.cos(sunPos.altitude) * beamDirection;
+        return { y: finalX, x: finalY, beam };
+      };
+
+      const calculateSunBeamPolygon = (sunX, sunY, beam) => {
+        const startTop = `${sunX + beamWidth},${sunY}`;
+        const startBottom = `${sunX - beamWidth},${sunY}`;
+        const endTop = `${sunX + beamWidth},${sunY + beam}`;
+        const endBottom = `${sunX - beamWidth},${sunY + beam}`;
+
+        const beamAngle =
+          (Math.atan((sunX - gridCenter) / (gridCenter - sunY)) * 180) /
+          Math.PI;
+
+        return {
+          polygonPoints: [endTop, startTop, startBottom, endBottom].join(" "),
+          beamAngle,
+        };
+      };
+
+      const dateSlider = document.getElementById("dateSlider");
+      const hourSlider = document.getElementById("hourSlider");
+      const beamWidthSlider = document.getElementById("beamWidthSlider");
+      const imageSizeSlider = document.getElementById("imageSizeSlider");
+      const selectedDateSpan = document.getElementById("selectedDate");
+      const selectedHourSpan = document.getElementById("selectedHour");
+      const selectedBeamWidthSpan =
+        document.getElementById("selectedBeamWidth");
+      const selectedImageSizeSpan =
+        document.getElementById("selectedImageSize");
+
+      const svgSizeSlider = document.getElementById("svgSizeSlider");
+      const selectedSvgSizeSpan = document.getElementById("selectedSvgSize");
+      const imageAngleSlider = document.getElementById("imageAngleSlider");
+      const selectedImageAngleSpan =
+        document.getElementById("selectedImageAngle");
+      const selectedTimeDiv = document.getElementById("selectedTime");
+
+      const updateSunPolygon = (parsedDate, parsedHour, sgLat, sgLong) => {
+        const result = calculateSunCoordinate(
+          parsedDate,
+          parsedHour,
+          sgLat,
+          sgLong
+        );
+        sunPosX = result.x;
+        sunPosY = result.y;
+        const { polygonPoints, beamAngle } = calculateSunBeamPolygon(
+          sunPosX,
+          sunPosY,
+          result.beam
+        );
+        if (beamAngle > 0) {
+          sunIcon.setAttribute("x", sunPosX - sunHeight / 2);
+        } else {
+          sunIcon.setAttribute("x", sunPosX - sunHeight);
+        }
+        sunIcon.setAttribute("y", sunPosY);
+        svgElement.appendChild(sunIcon);
+        sunBeamPolygon.setAttribute("points", polygonPoints);
+        sunBeamPolygon.setAttribute(
+          "transform",
+          `rotate(${beamAngle.toString()} ${sunPosX.toString()} ${sunPosY.toString()})`
+        );
+        svgElement.appendChild(sunBeamPolygon);
+      };
+
+      // Function to handle date slider change
+      dateSlider.addEventListener("input", function () {
+        const selectedDayOfYear = parseInt(this.value); // Convert string to integer
+        // Calculate date from day of the year
+        const currentDate = new Date(new Date().getFullYear(), 0); // January 1st of the current year
+        currentDate.setDate(selectedDayOfYear); // Set the selected day of the year
+        parsedDate = currentDate;
+        // console.log(parsedDate);
+        const formattedDate = currentDate.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        });
+        selectedDateSpan.textContent = formattedDate;
+        updateSunPolygon(parsedDate, parsedHour, sgLat, sgLong);
+      });
+
+      // Function to handle hour slider change
+      hourSlider.addEventListener("input", function () {
+        const selectedHour = parseFloat(this.value / 10).toFixed(1); // Convert string to integer
+        // console.log("selectedHour", selectedHour);
+        parsedHour = selectedHour;
+        // console.log(parsedHour);
+        const period = selectedHour >= 12 ? "PM" : "AM";
+        const hour12Format =
+          selectedHour > 12 ? selectedHour - 12 : selectedHour - 0;
+        // console.log("hour12Format", hour12Format);
+        const formattedHour = `${hour12Format.toFixed(1)} ${period}`;
+        // selectedHourSpan.textContent = formattedHour;
+        updateSunPolygon(parsedDate, parsedHour, sgLat, sgLong);
+      });
+
+      // Function to update beam width
+      function updateBeamWidth() {
+        beamWidth = parseInt(beamWidthSlider.value);
+        updateSunPolygon(parsedDate, parsedHour, sgLat, sgLong);
+        selectedBeamWidthSpan.textContent = beamWidth;
+      }
+
+      // Event listener for beam width slider
+      beamWidthSlider.addEventListener("input", updateBeamWidth);
+
+      const updateImageSize = () => {
+        const imageX = (svgSize - imageSize) / 2; // Centering the image horizontally
+        const imageY = (svgSize - imageSize) / 2; // Centering the image vertically
+        image.setAttribute("x", imageX.toString());
+        image.setAttribute("y", imageY.toString());
+        image.setAttribute("width", imageSize.toString());
+        image.setAttribute("height", imageSize.toString());
+        svgElement.appendChild(image);
+      };
+      // Event listener for image size
+      imageSizeSlider.addEventListener("input", () => {
+        imageSize = parseInt(imageSizeSlider.value);
+        updateImageSize();
+        selectedImageSizeSpan.textContent = imageSize;
+      });
+
+      const image = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "image"
+      );
+      image.setAttribute("href", "estateplan2.png");
+      updateImageSize();
+
+      const updateImageAngle = () => {
+        const imageX = (svgSize - imageSize) / 2; // Centering the image horizontally
+        const imageY = (svgSize - imageSize) / 2; // Centering the image vertically
+        const imageCenterX = imageX + imageSize / 2;
+        const imageCenterY = imageY + imageSize / 2;
+        image.setAttribute(
+          "transform",
+          `rotate(${imageAngle} ${imageCenterX.toString()} ${imageCenterY.toString()})`
+        );
+        svgElement.appendChild(image);
+      };
+      // Event listener for image angle
+      imageAngleSlider.addEventListener("input", () => {
+        imageAngle = parseInt(imageAngleSlider.value);
+        updateImageAngle();
+        selectedImageAngleSpan.textContent = imageAngle;
+      });
+      updateImageAngle();
+
+      // Add Font Awesome sun icon
+      const sunIcon = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "text"
+      );
+      sunIcon.setAttribute("x", (150).toString());
+      sunIcon.setAttribute("y", (159).toString());
+      sunIcon.setAttribute("class", "fas");
+      sunIcon.style.fill = "orange";
+      sunIcon.textContent = `\uf185`;
+      svgElement.appendChild(sunIcon);
+
+      // Draw polygon
+      const sunBeamPolygon = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "polygon"
+      );
+      sunBeamPolygon.setAttribute("points", "0,0 10,10, 10,20, 20,10");
+      sunBeamPolygon.setAttribute("stroke", gridColor);
+      sunBeamPolygon.setAttribute("stroke-width", "1");
+      sunBeamPolygon.setAttribute("stroke-opacity", "0.2");
+      sunBeamPolygon.setAttribute("fill", "red");
+      sunBeamPolygon.setAttribute("fill-opacity", "0.2");
+      svgElement.appendChild(sunBeamPolygon);
+
+      svgSizeSlider.addEventListener("input", () => {
+        svgSize = parseInt(svgSizeSlider.value);
+        gridCenter = svgSize / 2;
+        svgElement.setAttribute("width", svgSize.toString());
+        svgElement.setAttribute("height", svgSize.toString());
+        selectedSvgSize.textContent = svgSize;
+        calculateYearlyPoints();
+        updateBeamWidth();
+        updateImageSize();
+        updateSunPolygon(parsedDate, parsedHour, sgLat, sgLong);
+        setNorth();
+      });
+
+      imageUpload.addEventListener("change", function (event) {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            const imageUrl = e.target.result;
+            const uploadedImage = new Image();
+            uploadedImage.src = imageUrl;
+            uploadedImage.onload = function () {
+              image.removeAttribute("href", "estateplan2.png");
+              image.setAttribute("href", imageUrl);
+              svgElement.appendChild(image);
+            };
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+
+      document.getElementById("svgContainer").appendChild(svgElement);
+      updateSunPolygon(parsedDate, parsedHour, sgLat, sgLong);
+    </script>
+  </body>
+</html>
